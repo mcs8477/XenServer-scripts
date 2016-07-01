@@ -1,24 +1,22 @@
 #  Purpose: Increase the hard drive size of Virtual machines running on XenServer
 #
-#  REQUIREMENTS:Due to "fun" with Citrix Powershell modules / Snap-ins, this script can 
-#				only run ON a Xen Controller, that also has the XenServer powershell snap-in
-#				installed.
+#  REQUIREMENTS:  Due to "fun" with Citrix Powershell modules / Snap-ins, this script can 
+#		only run ON a Xen Controller, that also has the XenServer powershell snap-in
+#		installed.  Run from Citrix XenServer PowerShell SnapIn Powershell Shortcut
 #
 #  Author : mcs8477
-#  Version: 1.0 
-#  Release: 06/30/2016                                                         
+#  Version: 1.1 
+#  Release: 07/1/2016                                                         
 #
 # ============================================================================================
 
 # ======================================================================
 # -- C O N S T A I N T S
 # ======================================================================
-$MinimumHDDsizeGB = 60  # ** Could prompt for this value
-$MinimumHDDsizeBytes = $MinimumHDDsizeGB * 1024 * 1024 * 1024
-
-$ModuleNames = "ActiveDirectory","Citrix.XenDesktop.Admin"
-
-$XenServer_PoolMasters = @()
+$MaxHDDsize = 120
+$BytesInGBytes = 1024 * 1024 * 1024
+#$MinimumHDDsizeGB = 60  # ** Could prompt for this value
+#$MinimumHDDsizeBytes = $MinimumHDDsizeGB * $BytesInGBytes
 
 $ReportName = ".\XenVMlist.csv"		
 # ** Reporting object properties
@@ -41,38 +39,63 @@ $colVMs=@()
 # ======================================================================
 # -- F U N C T I O N S
 # ======================================================================
-Function Import-PowerShellModule {
+Function Get-MinHddSize {
+	cls
+	write-host "************************************************************" -BackgroundColor Blue -ForegroundColor White
+	write-host "This script will look for XenServer VMs with hard drive     " -BackgroundColor Blue -ForegroundColor White
+	write-host "sizes below a specified value, and attempt to increase      " -BackgroundColor Blue -ForegroundColor White
+	write-host "the allocation in XenServer and Extend the volume in        " -BackgroundColor Blue -ForegroundColor White
+	write-host "Windows.  It will query XenDesktop to determine if the VM   " -BackgroundColor Blue -ForegroundColor White
+	write-host "is in use and can be shutdown to perform the operation.     " -BackgroundColor Blue -ForegroundColor White
+	Write-Host "                                                            " -BackgroundColor Blue -ForegroundColor White
+	write-host "************************************************************" -BackgroundColor Blue -ForegroundColor White
+	write-host "Type the Minimum hard drive size in GB Followed by [ENTER]  " -BackgroundColor Blue -ForegroundColor Yellow
+	Write-Host "                                                            " -BackgroundColor Blue -ForegroundColor White
+	[int]$MinSize = Read-Host 
+	if ($MinSize -gt $MaxHDDsize ) {
+		Write-Host " "
+		Write-Host "WARNING:  Hard drive size selected it larger than $MaxHDDsize" -BackgroundColor White -ForegroundColor Red
+		Write-Host "          Resetting to $MaxHDDsize  !!!                      " -BackgroundColor White -ForegroundColor Red
+		$MinSize = $MaxHDDsize
+	} # END if $MinSize
+	return $MinSize
+	
+} # END Get-MinHddSize
+
+Function Get-PoolMasters {
 # ============================================================================================
-# -- Import-PowerShellModule
+# -- Get-PoolMasters
 # ============================================================================================
 #	Parameters:
-#		$ModuleName - Name of PowerShell module to import
-#
-#	Example Use:
-#		Import-PowerShellModule ActiveDirectory
+#		None
 #		
+#	Example Use:
+#		Get-PoolMasters
 # ============================================================================================
-	Param (
-		[Parameter(Mandatory=$true)]
-		[String] $ModuleName
-	) # END Param block
-	
-	Write-Host "Loading required module:" $ModuleName
-	if (-not (Get-Module $ModuleName)) {
-		try {
-			Import-Module $ModuleName -Force -ErrorAction Stop
-		} # End try
-		catch {
-			Write-Host " "
-			Write-Host "=========================================================================================" -BackgroundColor Red -ForegroundColor White
-			Write-Host "W A R N I N G:  Unable to load the required modules for provided PowerShell CMDLETS !!   " -BackgroundColor Red -ForegroundColor White
-			Write-Host "=========================================================================================" -BackgroundColor Red -ForegroundColor White
-			Write-Host " "
-		} # End catch
-	} # End IF module isn't loaded
-
-
-} # END Import-PowerShellModule
+	$PoolMasters = @()
+	$Done = $false
+	do {
+		cls
+		write-host "Currently Entered Pool Master(s):              " -BackgroundColor Blue -ForegroundColor White
+		write-host $PoolMasters | Format-List -BackgroundColor Blue -ForegroundColor White
+		write-host "                                               " -BackgroundColor Blue -ForegroundColor White
+		write-host "===============================================" -BackgroundColor Blue -ForegroundColor White
+		write-host "                                               " -BackgroundColor Blue -ForegroundColor White
+		write-host "Enter any additional XenServer Pool Master FQDN" -BackgroundColor Blue -ForegroundColor White
+		write-host "OR leave blank if done, Followed by [ENTER]    " -BackgroundColor Blue -ForegroundColor White
+		Write-Host "                                               " -BackgroundColor Blue -ForegroundColor White
+		$XenServer = Read-Host 
+		if ($XenServer) {
+			$PoolMasters += $XenServer
+			$XenServer = ""
+		} # END if $XenServer
+		else {
+			$Done = $true
+			}
+	} # End do
+	Until ($Done)
+	return $PoolMasters
+} # END Get-PoolMasters
 
 Function Get-YesOrNo {
 # ============================================================================================
@@ -152,10 +175,21 @@ Function Test-ADPassword {
 # ======================================================================
 
 # ** Add the required PowerShell modules
-foreach ($ModuleName in $ModuleNames) { 
-	Import-PowerShellModule $ModuleName 
-}
-Add-PSSnapin Citrix.* -ErrorAction Stop
+try {
+	Import-Module "Citrix.XenDesktop.Admin" -Force -ErrorAction Stop
+	Import-Module "ActiveDirectory" -Force -ErrorAction Stop
+	Add-PSSnapin Citrix.* -ErrorAction Stop
+	} # End try
+catch {
+		Write-Host " "
+		Write-Host "=========================================================================================" -BackgroundColor Red -ForegroundColor White
+		Write-Host "W A R N I N G:  Unable to load the required modules for provided PowerShell CMDLETS !!   " -BackgroundColor Red -ForegroundColor White
+		Write-Host "=========================================================================================" -BackgroundColor Red -ForegroundColor White
+		Write-Host " "
+	} # End catch
+
+$MinimumHDDsizeGB = Get-MinHddSize 
+$MinimumHDDsizeBytes = $MinimumHDDsizeGB * $BytesInGBytes
 
 # ** Provide Domain Credentials
 do {
@@ -163,10 +197,14 @@ do {
 }
 until (Test-ADPassword $MyCred)
 
+$XenServer_PoolMasters = Get-PoolMasters
+
+cls
 # ** Loop thru XenServer Pools
 Foreach	($XenServer_PoolMaster in $XenServer_PoolMasters) {
-	Connect-XenServer -Server $XenServer_PoolMaster -SetDefaultSession -creds $MyCreds
+	Connect-XenServer -Server $XenServer_PoolMaster -SetDefaultSession -creds $MyCred
 	$VMs = Get-XenVM
+	Write-Host "Checking VMs, this may take some time..."
 	foreach ($VM in $VMs) {
 		# ** Follow Xenserver's convoluted path to get to the hard drive details
 		foreach ($VMvbd in $VM.vbds) {
@@ -184,17 +222,19 @@ Foreach	($XenServer_PoolMaster in $XenServer_PoolMasters) {
 					$VMobj.VBDdevice = $VBD.device
 					$VMobj.VBDtype = $VBD.type
 					$VMobj.VDIname = $VDI.name_label
-					$VMobj.VDIPrevVSizeGB = ($VDI.virtual_size / (1024*1024*1024))
-					$VMobj.VDIPrevUtilizationGB = ($VDI.physical_utilisation / (1024*1024*1024))
+					$VMobj.VDIPrevVSizeGB = ($VDI.virtual_size / $BytesInGBytes)
+					$VMobj.VDIPrevUtilizationGB = ($VDI.physical_utilisation / $BytesInGBytes)
 					$VMobj.DiskStatus="Needs to be Resized"
 					
 					# ** Running from Controllers and use get-brokerdesktop to determine if VM is in use
-					$MachineName = "Corporate\" + $VM.name_label
+					# ** Assuming computer accounts are in the same domain as the user
+					$MachineName = "$ENV:USERDOMAIN\" + $VM.name_label
 					# ** if it exists, then it is a Windows VM registered with XenDesktop
 					$BD = get-brokerdesktop -machinename $MachineName -ErrorAction SilentlyContinue
 					if ($BD){
 					 	if ($BD.SessionState -eq $null) {
 					 		Write-Host "VM currently does not have any sessions logged in"
+							#** If prefer to prompt to perform disk resize, uncomment following line
 							#$ResizeHDD = get-YesOrNo "Resize the hard drive of this VM??"
 							$ResizeHDD = $true
 							} # END if $BD.SessionState
@@ -210,7 +250,6 @@ Foreach	($XenServer_PoolMaster in $XenServer_PoolMasters) {
 						$VMobj.DiskStatus = "VM Not in XenDesktop, Hard drive resize needed"
 						} # END else $BD 		
 					
-					#$ResizeHDD = get-YesOrNo "Resize the hard drive of this VM??" 
 					if ($ResizeHDD) {
 					# ** Issue shutdown of VM
 						if ($VM.power_state -eq "Running") {
@@ -241,8 +280,8 @@ Foreach	($XenServer_PoolMaster in $XenServer_PoolMasters) {
 						
 						# ** Get new size of VM
 						$VDI = Get-XenVDI $VBD.VDI
-						$VMobj.VDICurrentVSizeGB = ($VDI.virtual_size / (1024*1024*1024))
-						$VMobj.VDICurrentUtilizationGB = ($VDI.physical_utilisation / (1024*1024*1024))
+						$VMobj.VDICurrentVSizeGB = ($VDI.virtual_size / $BytesInGBytes)
+						$VMobj.VDICurrentUtilizationGB = ($VDI.physical_utilisation / $BytesInGBytes)
 						$VMobj.DiskStatus="Resized"
 						
 						# ** Waiting for VM to power on.  MachineInternalState indicates that it has re-registered
@@ -269,7 +308,7 @@ Foreach	($XenServer_PoolMaster in $XenServer_PoolMasters) {
 						
 						# ** Extend the Volume in Windows
 						Write-Host "Extending the Volume in Windows"
-						Invoke-Command -ComputerName $VM.name_label -Credential $MyCreds -ScriptBlock {
+						Invoke-Command -ComputerName $VM.name_label -Credential $MyCred -ScriptBlock {
 							"rescan","select volume C","extend" | diskpart }
 						
 					} # END if $ResizeHDD
